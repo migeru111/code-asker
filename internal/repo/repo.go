@@ -105,6 +105,9 @@ func (s *Store) resolve(repo, rel string) (string, error) {
 	return full, nil
 }
 
+// Path resolves a file or directory inside a repository to its canonical absolute path.
+func (s *Store) Path(repo, rel string) (string, error) { return s.resolve(repo, rel) }
+
 // List returns the entries of a directory inside a repository.
 func (s *Store) List(repo, rel string) ([]Entry, error) {
 	dir, err := s.resolve(repo, rel)

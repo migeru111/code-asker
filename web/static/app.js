@@ -5,6 +5,9 @@
   const backBtn = document.getElementById('back');
   const tools = document.getElementById('tools');
   const wrapBtn = document.getElementById('wrap');
+  const searchBtn = document.getElementById('search');
+  const symBtn = document.getElementById('symbols');
+  const sheet = document.getElementById('sheet');
   const CHUNK = 500;
 
   const LANGS = {
@@ -51,7 +54,14 @@
     return res.json();
   }
 
-  function setHeader(title, back) {
+  function closeSheet() { sheet.hidden = true; }
+  document.getElementById('sheet-close').onclick = closeSheet;
+
+  function setHeader(title, back, searchTarget) {
+    closeSheet();
+    symBtn.hidden = true;
+    searchBtn.hidden = !searchTarget;
+    searchBtn.onclick = () => { location.hash = searchTarget; };
     titleEl.innerHTML = '<bdi>' + esc(title) + '</bdi>';
     backBtn.hidden = !back;
     backBtn.onclick = () => { location.hash = back; };
@@ -62,6 +72,7 @@
     const [p, q] = h.split('?');
     const seg = p.split('/').filter(Boolean).map(decodeURIComponent);
     const query = new URLSearchParams(q || '');
+    if (seg[0] === 's' && seg[1]) return { kind: 'search', repo: seg[1], path: seg.slice(2).join('/'), q: query.get('q') || '', regex: query.get('re') === '1' };
     if (seg[0] === 't' && seg[1]) return { kind: 'tree', repo: seg[1], path: seg.slice(2).join('/') };
     if (seg[0] === 'f' && seg[1] && seg[2]) return { kind: 'file', repo: seg[1], path: seg.slice(2).join('/'), line: parseInt(query.get('L'), 10) || 0 };
     return { kind: 'repos' };
@@ -69,6 +80,8 @@
 
   const treeHash = (repo, path) => '#/t/' + encodeURIComponent(repo) + (path ? '/' + encPath(path) : '');
   const fileHash = (repo, path, line) => '#/f/' + encodeURIComponent(repo) + '/' + encPath(path) + (line ? '?L=' + line : '');
+  const searchHash = (repo, path, q, regex) => '#/s/' + encodeURIComponent(repo) + (path ? '/' + encPath(path) : '') +
+    (q ? '?q=' + encodeURIComponent(q) + (regex ? '&re=1' : '') : '');
   const parentOf = (p) => p.split('/').slice(0, -1).join('/');
 
   // ---- views
@@ -106,7 +119,7 @@
   }
 
   async function showTree(r) {
-    setHeader(r.repo + (r.path ? '/' + r.path : ''), r.path ? treeHash(r.repo, parentOf(r.path)) : '#/');
+    setHeader(r.repo + (r.path ? '/' + r.path : ''), r.path ? treeHash(r.repo, parentOf(r.path)) : '#/', searchHash(r.repo, r.path, '', false));
     tools.hidden = true;
     view.innerHTML = '<p class="msg">読み込み中…</p>';
     const ents = await api('tree', { repo: r.repo, path: r.path });
@@ -149,8 +162,10 @@
 
   async function showFile(r) {
     const parent = treeHash(r.repo, parentOf(r.path));
-    setHeader(r.repo + '/' + r.path, parent);
+    setHeader(r.repo + '/' + r.path, parent, searchHash(r.repo, '', '', false));
     tools.hidden = false;
+    symBtn.hidden = false;
+    symBtn.onclick = null;
     view.innerHTML = '<p class="msg">読み込み中…</p>';
     const lang = langFor(r.path);
     const first = r.line > 0 ? Math.max(1, Math.floor((r.line - 1) / CHUNK) * CHUNK + 1) : 1;
@@ -202,10 +217,73 @@
       new IntersectionObserver((es) => { if (es.some((e) => e.isIntersecting)) loadNext().catch(() => {}); },
         { rootMargin: '600px' }).observe(botBtn);
     }
-    if (r.line > 0) {
-      const el = code.querySelector('.row[data-n="' + r.line + '"]');
-      if (el) el.scrollIntoView({ block: 'center' });
-    } else window.scrollTo(0, 0);
+    function highlightRow(n) {
+      const prev = code.querySelector('.row.hl');
+      if (prev) prev.classList.remove('hl');
+      const el = code.querySelector('.row[data-n="' + n + '"]');
+      if (!el) return false;
+      el.classList.add('hl');
+      el.scrollIntoView({ block: 'center' });
+      return true;
+    }
+    function jump(n) {
+      closeSheet();
+      if (highlightRow(n)) {
+        history.replaceState(null, '', fileHash(r.repo, r.path, n)); // no hashchange: stay on the page
+      } else {
+        location.hash = fileHash(r.repo, r.path, n); // not loaded yet: re-render around that line
+      }
+    }
+    if (r.line > 0) highlightRow(r.line); else window.scrollTo(0, 0);
+
+    let syms = null;
+    symBtn.onclick = async () => {
+      if (!sheet.hidden) { closeSheet(); return; }
+      document.getElementById('sheet-title').textContent = 'シンボル';
+      const body = document.getElementById('sheet-body');
+      sheet.hidden = false;
+      if (!syms) {
+        body.innerHTML = '<p class="msg">読み込み中…</p>';
+        try { syms = await api('symbols', { repo: r.repo, path: r.path }); } catch (e) {
+          body.innerHTML = '<p class="msg err"></p>'; body.firstChild.textContent = 'エラー: ' + e.message; return;
+        }
+      }
+      if (!syms.length) { body.innerHTML = '<p class="msg">シンボルが見つかりません</p>'; return; }
+      body.innerHTML = syms.map((s) => '<button type="button" class="item" data-line="' + s.line + '"><span class="kind">' + esc(s.kind) +
+        '</span><span class="nm">' + (s.scope ? '<small>' + esc(s.scope) + '.</small>' : '') + esc(s.name) + '</span><span class="at">' + s.line + '</span></button>').join('');
+      body.onclick = (ev) => { const b = ev.target.closest('.item'); if (b) jump(parseInt(b.dataset.line, 10)); };
+    };
+  }
+
+  async function showSearch(r) {
+    const back = r.path ? treeHash(r.repo, r.path) : treeHash(r.repo, '');
+    setHeader('検索: ' + r.repo + (r.path ? '/' + r.path : ''), back, null);
+    tools.hidden = true;
+    view.innerHTML = '<form id="searchform"><input id="q" type="search" enterkeyhint="search" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="検索語">' +
+      '<label><input type="checkbox" id="re"> 正規表現</label><button type="submit">検索</button></form><div id="results"></div>';
+    const qEl = document.getElementById('q'); const reEl = document.getElementById('re'); const out = document.getElementById('results');
+    qEl.value = r.q; reEl.checked = r.regex;
+    async function run() {
+      const q = qEl.value.trim();
+      if (!q) return;
+      history.replaceState(null, '', searchHash(r.repo, r.path, q, reEl.checked));
+      out.innerHTML = '<p class="msg">検索中…</p>';
+      let res;
+      try { res = await api('search', { repo: r.repo, path: r.path, q, regex: reEl.checked ? '1' : '0' }); } catch (e) {
+        if (e instanceof Unauthorized) { showLogin(); return; }
+        out.innerHTML = '<p class="msg err"></p>'; out.firstChild.textContent = e.message; return;
+      }
+      if (!res.matches.length) { out.innerHTML = '<p class="msg">見つかりませんでした</p>'; return; }
+      const needle = reEl.checked ? null : q.toLowerCase();
+      out.innerHTML = res.matches.map((m) => {
+        let t = m.text.trim(); if (t.length > 240) t = t.slice(0, 240) + '…';
+        let h = esc(t);
+        if (needle) { const i = t.toLowerCase().indexOf(needle); if (i >= 0) h = esc(t.slice(0, i)) + '<mark>' + esc(t.slice(i, i + needle.length)) + '</mark>' + esc(t.slice(i + needle.length)); }
+        return '<a class="hit" href="' + fileHash(r.repo, m.path, m.line) + '"><div class="loc">' + esc(m.path) + ':' + m.line + '</div><div class="txt">' + h + '</div></a>';
+      }).join('') + (res.truncated ? '<p class="msg">結果が多いため先頭 ' + res.matches.length + ' 件のみ表示しています</p>' : '');
+    }
+    document.getElementById('searchform').onsubmit = (ev) => { ev.preventDefault(); qEl.blur(); run(); };
+    if (r.q) run();
   }
 
   function mkMore(label) {
@@ -219,6 +297,7 @@
     const r = parseRoute();
     try {
       if (r.kind === 'file') await showFile(r);
+      else if (r.kind === 'search') await showSearch(r);
       else if (r.kind === 'tree') await showTree(r);
       else await showRepos();
     } catch (e) {

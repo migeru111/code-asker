@@ -7,11 +7,15 @@ import (
 	"io/fs"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
+	"strings"
 
 	"github.com/migeru111/code-asker/internal/auth"
 	"github.com/migeru111/code-asker/internal/repo"
 	"github.com/migeru111/code-asker/internal/safepath"
+	"github.com/migeru111/code-asker/internal/search"
+	"github.com/migeru111/code-asker/internal/symbols"
 )
 
 type Server struct {
@@ -19,10 +23,11 @@ type Server struct {
 	store   *repo.Store
 	static  fs.FS
 	version string
+	symbols *symbols.Extractor
 }
 
 func New(a *auth.Auth, store *repo.Store, static fs.FS, version string) *Server {
-	return &Server{auth: a, store: store, static: static, version: version}
+	return &Server{auth: a, store: store, static: static, version: version, symbols: symbols.New()}
 }
 
 // Handler returns the root handler.
@@ -40,6 +45,8 @@ func (s *Server) Handler() http.Handler {
 	api.HandleFunc("GET /api/repos", s.repos)
 	api.HandleFunc("GET /api/tree", s.tree)
 	api.HandleFunc("GET /api/file", s.file)
+	api.HandleFunc("GET /api/symbols", s.symbolList)
+	api.HandleFunc("GET /api/search", s.search)
 	mux.Handle("/api/", s.auth.Middleware(api))
 
 	// The static shell contains no repository data; every data endpoint is authenticated.
@@ -107,6 +114,54 @@ func (s *Server) file(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, f)
+}
+
+func (s *Server) symbolList(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	abs, err := s.store.Path(q.Get("repo"), q.Get("path"))
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	syms, err := s.symbols.Extract(r.Context(), abs)
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	writeJSON(w, 200, syms)
+}
+
+func (s *Server) search(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	repoDir, err := s.store.Path(q.Get("repo"), "")
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	sub := ""
+	if p := q.Get("path"); p != "" {
+		abs, err := s.store.Path(q.Get("repo"), p)
+		if err != nil {
+			fail(w, err)
+			return
+		}
+		rel, err := filepath.Rel(repoDir, abs)
+		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			fail(w, safepath.ErrOutside)
+			return
+		}
+		sub = rel
+	}
+	res, err := search.Run(r.Context(), repoDir, sub, q.Get("q"), search.Options{Regex: q.Get("regex") == "1"})
+	if err != nil {
+		if errors.Is(err, search.ErrBadQuery) {
+			writeErr(w, 400, strings.TrimPrefix(err.Error(), search.ErrBadQuery.Error()+"\n"))
+			return
+		}
+		fail(w, err)
+		return
+	}
+	writeJSON(w, 200, res)
 }
 
 func fail(w http.ResponseWriter, err error) {

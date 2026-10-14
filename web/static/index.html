@@ -20,13 +20,19 @@
 <header id="bar">
   <button id="back" type="button" aria-label="戻る" hidden>‹</button>
   <div id="title">code-asker</div>
+  <button id="search" type="button" aria-label="検索" hidden>🔍</button>
   <div id="tools" hidden>
+    <button id="symbols" type="button" aria-label="シンボル一覧">{ }</button>
     <button id="fs-dec" type="button" aria-label="文字を小さく">A−</button>
     <button id="fs-inc" type="button" aria-label="文字を大きく">A+</button>
     <button id="wrap" type="button" aria-label="折り返し切替">⏎</button>
   </div>
 </header>
 <main id="view"></main>
+<div id="sheet" hidden>
+  <div id="sheet-head"><span id="sheet-title"></span><button id="sheet-close" type="button" aria-label="閉じる">✕</button></div>
+  <div id="sheet-body"></div>
+</div>
 <script src="vendor/highlight.min.js"></script>
 <script src="app.js"></script>
 </body>
