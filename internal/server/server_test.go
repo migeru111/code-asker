@@ -1,21 +1,28 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
 	"testing/fstest"
+	"time"
 
+	"github.com/migeru111/code-asker/internal/ai"
 	"github.com/migeru111/code-asker/internal/auth"
 	"github.com/migeru111/code-asker/internal/repo"
 	"github.com/migeru111/code-asker/internal/safepath"
 )
 
-func newTestServer(t *testing.T) http.Handler {
+func newTestServer(t *testing.T) http.Handler { return newTestServerAI(t, nil) }
+
+func newTestServerAI(t *testing.T, p ai.Provider) http.Handler {
 	t.Helper()
 	base := t.TempDir()
 	root := filepath.Join(base, "src")
@@ -30,7 +37,7 @@ func newTestServer(t *testing.T) http.Handler {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return New(auth.New("test-token-123"), repo.NewStore(r), fstest.MapFS{"index.html": {Data: []byte("hi")}}, "test").Handler()
+	return New(auth.New("test-token-123"), repo.NewStore(r), fstest.MapFS{"index.html": {Data: []byte("hi")}}, "test", p).Handler()
 }
 
 func get(h http.Handler, path string, authed bool) *httptest.ResponseRecorder {
@@ -94,5 +101,103 @@ func TestSearch(t *testing.T) {
 	}
 	if rec = get(h, "/api/search?repo=proj&q=%28&regex=1", true); rec.Code != 400 {
 		t.Errorf("bad regex: %d %s", rec.Code, rec.Body)
+	}
+}
+
+type fakeAI struct {
+	mu   sync.Mutex
+	got  ai.Request
+	hold chan struct{} // if set, Ask blocks until closed
+}
+
+func (f *fakeAI) Name() string { return "fake" }
+func (f *fakeAI) Ask(ctx context.Context, r ai.Request) (<-chan ai.Event, error) {
+	f.mu.Lock()
+	f.got = r
+	f.mu.Unlock()
+	ch := make(chan ai.Event, 4)
+	go func() {
+		defer close(ch)
+		if f.hold != nil {
+			<-f.hold
+		}
+		ch <- ai.Event{Type: ai.EventTool, Text: "Grep foo"}
+		ch <- ai.Event{Type: ai.EventText, Text: "答え"}
+		ch <- ai.Event{Type: ai.EventDone, Session: "sid"}
+	}()
+	return ch, nil
+}
+
+func post(h http.Handler, body string, authed bool) *httptest.ResponseRecorder {
+	req := httptest.NewRequest("POST", "/api/chat", strings.NewReader(body))
+	if authed {
+		req.Header.Set("Authorization", "Bearer test-token-123")
+	}
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	return rec
+}
+
+func TestChat(t *testing.T) {
+	f := &fakeAI{}
+	h := newTestServerAI(t, f)
+	if c := post(h, `{}`, false).Code; c != 401 {
+		t.Fatalf("no auth: %d", c)
+	}
+	rec := post(h, `{"repo":"proj","path":"a.go","start":3,"end":3,"question":"何？"}`, true)
+	if rec.Code != 200 || !strings.HasPrefix(rec.Header().Get("Content-Type"), "text/event-stream") {
+		t.Fatalf("%d %s", rec.Code, rec.Body)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{"event: start", `"start":3`, "event: tool", "event: text", "答え", "event: done", `"session":"sid"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("SSE lacks %q:\n%s", want, body)
+		}
+	}
+	f.mu.Lock()
+	got := f.got
+	f.mu.Unlock()
+	if !strings.HasSuffix(got.RepoDir, "proj") || got.Location.StartLine != 3 || got.Location.TotalLines != 3 ||
+		!strings.Contains(got.Snippet, "ParseHeader") || got.Question != "何？" {
+		t.Errorf("request to provider: %+v", got)
+	}
+
+	for body, want := range map[string]int{
+		`{"repo":"proj","path":"a.go","question":""}`:         400,
+		`{"repo":"proj","path":"escape/x.go","question":"q"}`: 403,
+		`{"repo":"proj","path":".git/config","question":"q"}`: 403,
+		`{"repo":"../x","path":"a.go","question":"q"}`:        400,
+		`{"repo":"proj","path":"nope.go","question":"q"}`:     404,
+		`not json`: 400,
+	} {
+		if c := post(h, body, true).Code; c != want {
+			t.Errorf("%s: got %d want %d", body, c, want)
+		}
+	}
+	if c := post(newTestServer(t), `{"repo":"proj","question":"q"}`, true).Code; c != 503 {
+		t.Errorf("AI disabled: %d", c)
+	}
+}
+
+func TestChatBusy(t *testing.T) {
+	f := &fakeAI{hold: make(chan struct{})}
+	h := newTestServerAI(t, f)
+	done := make(chan int)
+	go func() { done <- post(h, `{"repo":"proj","path":"a.go","question":"q"}`, true).Code }()
+	for i := 0; i < 200; i++ { // wait until the first request holds the slot
+		f.mu.Lock()
+		started := f.got.Question != ""
+		f.mu.Unlock()
+		if started {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if c := post(h, `{"repo":"proj","path":"a.go","question":"q2"}`, true).Code; c != 429 {
+		t.Errorf("second concurrent question: %d", c)
+	}
+	close(f.hold)
+	if c := <-done; c != 200 {
+		t.Errorf("first: %d", c)
 	}
 }

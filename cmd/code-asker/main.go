@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/migeru111/code-asker/internal/ai"
 	"github.com/migeru111/code-asker/internal/auth"
 	"github.com/migeru111/code-asker/internal/repo"
 	"github.com/migeru111/code-asker/internal/safepath"
@@ -37,9 +38,21 @@ func main() {
 	if err != nil {
 		log.Fatalf("root: %v", err)
 	}
+	var provider ai.Provider
+	if os.Getenv("CODE_ASKER_AI") != "off" {
+		timeout := 3 * time.Minute
+		if v := os.Getenv("CODE_ASKER_AI_TIMEOUT"); v != "" {
+			d, err := time.ParseDuration(v)
+			if err != nil || d <= 0 {
+				log.Fatalf("CODE_ASKER_AI_TIMEOUT: invalid duration %q", v)
+			}
+			timeout = d
+		}
+		provider = &ai.ClaudeCLI{Bin: os.Getenv("CODE_ASKER_CLAUDE_BIN"), Model: os.Getenv("CODE_ASKER_CLAUDE_MODEL"), Timeout: timeout}
+	}
 	srv := &http.Server{
 		Addr:              listen,
-		Handler:           server.New(auth.New(token), repo.NewStore(root), web.Static(), version).Handler(),
+		Handler:           server.New(auth.New(token), repo.NewStore(root), web.Static(), version, provider).Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	go func() {

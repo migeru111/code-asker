@@ -8,6 +8,13 @@
   const searchBtn = document.getElementById('search');
   const symBtn = document.getElementById('symbols');
   const sheet = document.getElementById('sheet');
+  const chatPanel = document.getElementById('chat');
+  const chatBtn = document.getElementById('chatbtn');
+  const chatLog = document.getElementById('chat-log');
+  const chatLoc = document.getElementById('chat-loc');
+  const chatQ = document.getElementById('chat-q');
+  const chatSend = document.getElementById('chat-send');
+  const barEl = document.getElementById('bar');
   const CHUNK = 500;
 
   const LANGS = {
@@ -54,7 +61,7 @@
     return res.json();
   }
 
-  function closeSheet() { sheet.hidden = true; }
+  function closeSheet() { sheet.hidden = true; closeChat(); }
   document.getElementById('sheet-close').onclick = closeSheet;
 
   function setHeader(title, back, searchTarget) {
@@ -166,6 +173,9 @@
     tools.hidden = false;
     symBtn.hidden = false;
     symBtn.onclick = null;
+    chatCtx = { repo: r.repo, path: r.path };
+    chatBtn.onclick = toggleChat;
+    if (chat.repo !== r.repo) resetChat(r.repo);
     view.innerHTML = '<p class="msg">読み込み中…</p>';
     const lang = langFor(r.path);
     const first = r.line > 0 ? Math.max(1, Math.floor((r.line - 1) / CHUNK) * CHUNK + 1) : 1;
@@ -291,6 +301,131 @@
     b.type = 'button'; b.className = 'more'; b.textContent = label; b.hidden = true;
     return b;
   }
+
+  // ---- AI chat
+  const chat = { repo: null, session: '', busy: null };
+  let chatCtx = null;
+
+  function resetChat(repo) {
+    if (chat.busy) chat.busy.abort();
+    chat.repo = repo; chat.session = ''; chat.busy = null;
+    chatLog.innerHTML = '<p class="msg">コードを見ながら質問できます。見えている行範囲が自動で付きます。</p>';
+  }
+  function closeChat() { chatPanel.hidden = true; document.body.classList.remove('chat-open'); }
+  function toggleChat() {
+    if (!chatPanel.hidden) { closeChat(); return; }
+    sheet.hidden = true;
+    chatPanel.hidden = false;
+    document.body.classList.add('chat-open');
+    updateChatLoc();
+    chatLog.scrollTop = chatLog.scrollHeight;
+  }
+  document.getElementById('chat-close').onclick = closeChat;
+  document.getElementById('chat-new').onclick = () => { if (chatCtx) resetChat(chatCtx.repo); };
+
+  // Lines currently visible above the chat panel, found by hit-testing rows (no scroll tracking needed).
+  function visibleRange() {
+    const x = Math.floor(window.innerWidth / 2);
+    const top = barEl.getBoundingClientRect().bottom + 2;
+    const bottom = (chatPanel.hidden ? window.innerHeight : chatPanel.getBoundingClientRect().top) - 2;
+    const rowAt = (y, step) => {
+      for (let i = 0; i < 12; i++, y += step) {
+        const el = document.elementFromPoint(x, y);
+        const row = el && el.closest && el.closest('.row');
+        if (row) return parseInt(row.dataset.n, 10);
+      }
+      return 0;
+    };
+    const s = rowAt(top, 4); const e = rowAt(bottom, -4);
+    return s && e ? { start: s, end: Math.max(s, e) } : { start: s || e || 1, end: e || s || 1 };
+  }
+  function updateChatLoc() {
+    if (!chatCtx || chatPanel.hidden) return;
+    const v = visibleRange();
+    chatLoc.textContent = '📍 ' + chatCtx.path + '  L' + v.start + '–' + v.end;
+    return v;
+  }
+  let scrollTick = false;
+  window.addEventListener('scroll', () => {
+    if (chatPanel.hidden || scrollTick) return;
+    scrollTick = true;
+    requestAnimationFrame(() => { scrollTick = false; updateChatLoc(); });
+  }, { passive: true });
+
+  function linkify(html) {
+    return html.replace(/([\w.\-\/]+\.\w+):(\d+)/g, (m, p, n) => chatCtx
+      ? '<a href="' + fileHash(chatCtx.repo, p, parseInt(n, 10)) + '">' + m + '</a>' : m);
+  }
+  function inlineMd(t) {
+    return t.split(/(`[^`\n]+`)/).map((part, i) => i % 2
+      ? '<code>' + linkify(esc(part.slice(1, -1))) + '</code>'
+      : linkify(esc(part).replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>')).replace(/\n/g, '<br>')).join('');
+  }
+  function renderMd(src) {
+    return src.split(/(```[^\n]*\n[\s\S]*?(?:```|$))/).map((part, i) => {
+      if (!(i % 2)) return inlineMd(part);
+      const body = part.replace(/^```[^\n]*\n/, '').replace(/```$/, '');
+      return '<pre><code>' + esc(body.replace(/\n$/, '')) + '</code></pre>';
+    }).join('');
+  }
+
+  document.getElementById('chat-form').onsubmit = async (ev) => {
+    ev.preventDefault();
+    if (chat.busy) { chat.busy.abort(); return; }
+    const question = chatQ.value.trim();
+    if (!question || !chatCtx) return;
+    const v = updateChatLoc() || visibleRange();
+    chatQ.value = ''; chatQ.blur();
+    if (chatLog.querySelector('p.msg')) chatLog.innerHTML = '';
+    const u = document.createElement('div'); u.className = 'msg-u';
+    u.innerHTML = '<span class="at"></span>'; u.firstChild.textContent = '📍 ' + chatCtx.path + ' L' + v.start + '–' + v.end;
+    u.append(question);
+    const a = document.createElement('div'); a.className = 'msg-a'; a.textContent = '考え中…';
+    chatLog.append(u, a); chatLog.scrollTop = chatLog.scrollHeight;
+
+    const ctl = new AbortController(); chat.busy = ctl;
+    chatSend.textContent = '停止'; chatSend.classList.add('stop');
+    let text = ''; let tools = ''; let err = '';
+    const paint = () => {
+      a.innerHTML = tools + renderMd(text) + (err ? '<span class="err">' + esc(err) + '</span>' : '');
+      chatLog.scrollTop = chatLog.scrollHeight;
+    };
+    try {
+      const res = await fetch('/api/chat', { method: 'POST', credentials: 'same-origin', signal: ctl.signal,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ repo: chatCtx.repo, path: chatCtx.path, start: v.start, end: v.end, question, session: chat.session }) });
+      if (res.status === 401) { showLogin(); return; }
+      if (!res.ok) { let m = res.statusText; try { m = (await res.json()).error || m; } catch (e) { /* ignore */ } throw new Error(m); }
+      const reader = res.body.getReader(); const dec = new TextDecoder(); let buf = '';
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += dec.decode(value, { stream: true });
+        let i;
+        while ((i = buf.indexOf('\n\n')) >= 0) {
+          const block = buf.slice(0, i); buf = buf.slice(i + 2);
+          let ev2 = 'message'; let data = '';
+          for (const line of block.split('\n')) {
+            if (line.startsWith('event: ')) ev2 = line.slice(7);
+            else if (line.startsWith('data: ')) data += line.slice(6);
+          }
+          if (!data) continue;
+          const d = JSON.parse(data);
+          if (ev2 === 'text') text += d.t;
+          else if (ev2 === 'tool') tools += '<span class="tool">🔎 ' + esc(d.t) + '</span>';
+          else if (ev2 === 'done') { if (d.session) chat.session = d.session; }
+          else if (ev2 === 'error') err = d.t;
+          paint();
+        }
+      }
+      if (!text && !err) { text = '(回答が空でした)'; paint(); }
+    } catch (e) {
+      if (e.name === 'AbortError') { err = '(中断しました)'; } else { err = 'エラー: ' + e.message; }
+      paint();
+    } finally {
+      chat.busy = null; chatSend.textContent = '送信'; chatSend.classList.remove('stop');
+    }
+  };
 
   // ---- router
   async function route() {
