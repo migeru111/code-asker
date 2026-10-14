@@ -33,6 +33,7 @@
 <div id="chat" hidden>
   <div id="chat-head"><div id="chat-loc"></div><button id="chat-new" type="button">新規</button><button id="chat-close" type="button" aria-label="閉じる">✕</button></div>
   <div id="chat-log"></div>
+  <div id="chat-cands" hidden></div>
   <form id="chat-form"><textarea id="chat-q" rows="2" placeholder="見えている範囲について質問…" autocapitalize="off"></textarea><button id="chat-send" type="submit">送信</button></form>
 </div>
 <div id="sheet" hidden>
@@ -40,6 +41,7 @@
   <div id="sheet-body"></div>
 </div>
 <script src="vendor/highlight.min.js"></script>
+<script src="locate.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

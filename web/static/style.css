@@ -97,3 +97,14 @@ body { margin: 0; background: var(--bg); color: var(--fg);
 #chat-send { min-width: 64px; border: 0; border-radius: 8px; background: var(--accent); color: #fff; font-size: 16px; }
 #chat-send.stop { background: #cf222e; }
 .chat-open #code { padding-bottom: 52vh; }
+
+.row.rng .ln { box-shadow: inset 3px 0 0 var(--accent); }
+#chat-cands { max-height: 38%; overflow-y: auto; border-top: 1px solid var(--line); background: var(--bar); }
+.cands-head { padding: 8px 12px 4px; font-size: 13px; color: var(--muted); }
+.cand { display: flex; align-items: baseline; gap: 8px; width: 100%; text-align: left; padding: 10px 12px; min-height: 44px;
+  border: 0; border-top: 1px solid var(--line); background: transparent; color: var(--fg); font-size: 14px; }
+.cand .kind { flex: none; min-width: 4em; color: var(--muted); font-size: 12px; }
+.cand .nm { flex: 1; min-width: 0; overflow-wrap: anywhere; font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+.cand .nm small { color: var(--muted); }
+.cand .at { flex: none; color: var(--muted); font-size: 12px; max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cand.alt { color: var(--accent); }

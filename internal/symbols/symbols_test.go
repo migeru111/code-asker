@@ -79,3 +79,20 @@ func TestExtractWithCtagsIfAvailable(t *testing.T) {
 		}
 	}
 }
+
+func TestFillEnds(t *testing.T) {
+	syms := []Symbol{
+		{Name: "Header", Kind: "implementation", Line: 2},
+		{Name: "parse_header", Kind: "method", Line: 3, Scope: "Header"},
+		{Name: "other", Kind: "method", Line: 10, Scope: "Header"},
+		{Name: "Foo", Kind: "interface", Line: 20},
+		{Name: "bar", Kind: "method", Line: 21, Scope: "Foo", End: 22},
+	}
+	fillEnds(syms)
+	want := map[string]int{"Header": 19, "parse_header": 9, "other": 19, "Foo": 20 + approxBodyLines, "bar": 22}
+	for _, s := range syms {
+		if s.End != want[s.Name] {
+			t.Errorf("%s: end=%d want %d", s.Name, s.End, want[s.Name])
+		}
+	}
+}

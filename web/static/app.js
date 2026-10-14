@@ -65,6 +65,7 @@
   document.getElementById('sheet-close').onclick = closeSheet;
 
   function setHeader(title, back, searchTarget) {
+    fileApi = null; chatCtx = null;
     closeSheet();
     symBtn.hidden = true;
     searchBtn.hidden = !searchTarget;
@@ -208,11 +209,12 @@
       window.scrollBy(0, document.documentElement.scrollHeight - before);
     }
     append(first, f.lines);
-    topBtn.onclick = async () => {
+    async function loadPrev() {
       const s = Math.max(1, lo - CHUNK);
       const p = await api('file', { repo: r.repo, path: r.path, start: s, limit: lo - s });
       prepend(s, p.lines);
-    };
+    }
+    topBtn.onclick = loadPrev;
     botBtn.onclick = loadNext;
     let loading = false;
     async function loadNext() {
@@ -247,6 +249,31 @@
     if (r.line > 0) highlightRow(r.line); else window.scrollTo(0, 0);
 
     let syms = null;
+    async function getSyms() {
+      if (!syms) syms = await api('symbols', { repo: r.repo, path: r.path });
+      return syms;
+    }
+
+    // Used by the chat: bring a line range into view and mark it.
+    const rowEl = (n) => code.querySelector('.row[data-n="' + n + '"]');
+    const sleep = (ms) => new Promise((res) => setTimeout(res, ms));
+    async function ensureLoaded(n) {
+      for (let g = 0; g < 60 && n > hi && hi < f.total_lines; g++) { if (loading) await sleep(60); else await loadNext(); }
+      for (let g = 0; g < 60 && n < lo && lo > 1; g++) await loadPrev();
+    }
+    async function reveal(start, end) {
+      start = Math.max(1, Math.min(start, f.total_lines)); end = Math.max(start, Math.min(end, f.total_lines));
+      await ensureLoaded(start); await ensureLoaded(end);
+      code.querySelectorAll('.row.rng').forEach((e) => e.classList.remove('rng'));
+      for (let n = start; n <= end; n++) { const e = rowEl(n); if (e) e.classList.add('rng'); }
+      const el = rowEl(start);
+      if (el) {
+        window.scrollTo({ top: el.getBoundingClientRect().top + window.scrollY - barEl.offsetHeight - 8, behavior: 'smooth' });
+        history.replaceState(null, '', fileHash(r.repo, r.path, start));
+      }
+    }
+    fileApi = { symbols: getSyms, cachedSymbols: () => syms, reveal };
+
     symBtn.onclick = async () => {
       if (!sheet.hidden) { closeSheet(); return; }
       document.getElementById('sheet-title').textContent = 'シンボル';
@@ -254,7 +281,7 @@
       sheet.hidden = false;
       if (!syms) {
         body.innerHTML = '<p class="msg">読み込み中…</p>';
-        try { syms = await api('symbols', { repo: r.repo, path: r.path }); } catch (e) {
+        try { await getSyms(); } catch (e) {
           body.innerHTML = '<p class="msg err"></p>'; body.firstChild.textContent = 'エラー: ' + e.message; return;
         }
       }
@@ -305,6 +332,8 @@
   // ---- AI chat
   const chat = { repo: null, session: '', busy: null };
   let chatCtx = null;
+  let fileApi = null;
+  const chatCands = document.getElementById('chat-cands');
 
   function resetChat(repo) {
     if (chat.busy) chat.busy.abort();
@@ -339,12 +368,30 @@
     const s = rowAt(top, 4); const e = rowAt(bottom, -4);
     return s && e ? { start: s, end: Math.max(s, e) } : { start: s || e || 1, end: e || s || 1 };
   }
+  // Shows how the current question text will be interpreted (also used when sending).
   function updateChatLoc() {
     if (!chatCtx || chatPanel.hidden) return;
     const v = visibleRange();
-    chatLoc.textContent = '📍 ' + chatCtx.path + '  L' + v.start + '–' + v.end;
+    const loc = Locate.parseLocation(chatQ.value);
+    let label = '📍 ' + chatCtx.path + '  L' + v.start + '–' + v.end + '（見えている範囲）';
+    if (loc.kind === 'range') label = '📍 L' + loc.start + '–' + loc.end + '（行番号の指定）';
+    else if (loc.kind === 'symbol') label = '🔎 「' + loc.name + '」を探します';
+    else if (loc.kind === 'describe') label = '🔎 場所は AI が探します';
+    else if (loc.kind === 'screen') {
+      if (loc.which === 'function' || loc.which === 'type') {
+        const syms = fileApi && fileApi.cachedSymbols();
+        const sym = syms && Locate.enclosing(syms, Math.floor((v.start + v.end) / 2), loc.which === 'type' ? 'type' : 'func');
+        label = sym ? '📍 ' + sym.name + '（L' + sym.line + '–' + (sym.end || '?') + '）' : '📍 画面の中央にある' + (loc.which === 'type' ? '型' : '関数');
+      } else {
+        const p = Locate.screenPart(v.start, v.end, loc.which);
+        label = '📍 画面の' + { top: '上', bottom: '下', middle: '中央' }[loc.which] + ' L' + p.start + '–' + p.end;
+      }
+    }
+    chatLoc.textContent = label;
     return v;
   }
+  chatQ.addEventListener('input', () => requestAnimationFrame(updateChatLoc));
+
   let scrollTick = false;
   window.addEventListener('scroll', () => {
     if (chatPanel.hidden || scrollTick) return;
@@ -369,16 +416,85 @@
     }).join('');
   }
 
+  const clampEnd = (s, e) => Math.min(e, s + 299);
+  function symbolTarget(c) {
+    return { path: c.path, start: c.line, end: clampEnd(c.line, c.end || c.line + 59), reveal: c.path === chatCtx.path,
+      label: c.name + '（' + c.kind + '）' };
+  }
+
+  // Turn the question into a concrete target: a line range, "let the AI search", or a list of candidates to confirm.
+  async function resolveTarget(q) {
+    const v = visibleRange(); const here = chatCtx.path;
+    const loc = Locate.parseLocation(q);
+    if (loc.kind === 'range') return { path: here, start: loc.start, end: loc.end, reveal: true, label: '行番号' };
+    if (loc.kind === 'describe') return { search: true, path: here, label: '場所は AI が探す' };
+    if (loc.kind === 'screen') {
+      if (loc.which === 'function' || loc.which === 'type') {
+        const syms = fileApi ? await fileApi.symbols().catch(() => []) : [];
+        const sym = Locate.enclosing(syms, Math.floor((v.start + v.end) / 2), loc.which === 'type' ? 'type' : 'func');
+        if (sym) return symbolTarget(Object.assign({ path: here }, sym));
+        return { path: here, start: v.start, end: v.end, label: '見えている範囲' };
+      }
+      const p = Locate.screenPart(v.start, v.end, loc.which);
+      return { path: here, start: p.start, end: p.end, label: '画面の' + { top: '上', bottom: '下', middle: '中央' }[loc.which] };
+    }
+    if (loc.kind === 'symbol') {
+      const hits = await api('symsearch', { repo: chatCtx.repo, q: loc.name, path: here });
+      const ranked = Locate.matchSymbols(loc.name, hits, loc.symClass)
+        .sort((x, y) => y.score - x.score || (y.path === here) - (x.path === here)); // same score: current file first
+      const want = Locate.norm(loc.name.split(/::|\./).pop());
+      const exact = ranked.filter((c) => Locate.norm(c.name) === want);
+      if (exact.length === 1) return symbolTarget(exact[0]);
+      if (ranked.length) return { candidates: ranked.slice(0, 8), name: loc.name };
+      return { search: true, path: here, label: '「' + loc.name + '」は見つからず AI が探す' };
+    }
+    return { path: here, start: v.start, end: v.end, label: '見えている範囲' };
+  }
+
+  function hideCands() { chatCands.hidden = true; chatCands.innerHTML = ''; }
+  function showCands(question, list, name) {
+    chatCands.innerHTML = '<div class="cands-head">「' + esc(name) + '」はどれですか？</div>';
+    for (const c of list) {
+      const b = document.createElement('button'); b.type = 'button'; b.className = 'cand';
+      b.innerHTML = '<span class="kind">' + esc(c.kind) + '</span><span class="nm">' + (c.scope ? '<small>' + esc(c.scope) + '.</small>' : '') + esc(c.name) +
+        '</span><span class="at">' + esc(c.path) + ':' + c.line + '</span>';
+      b.onclick = () => send(question, symbolTarget(c));
+      chatCands.append(b);
+    }
+    const ai = document.createElement('button'); ai.type = 'button'; ai.className = 'cand alt'; ai.textContent = '🔎 AI に探させる';
+    ai.onclick = () => send(question, { search: true, path: chatCtx.path, label: '場所は AI が探す' });
+    const cancel = document.createElement('button'); cancel.type = 'button'; cancel.className = 'cand alt'; cancel.textContent = 'キャンセル';
+    cancel.onclick = hideCands;
+    chatCands.append(ai, cancel);
+    chatCands.hidden = false;
+    chatCands.scrollIntoView({ block: 'nearest' });
+  }
+
   document.getElementById('chat-form').onsubmit = async (ev) => {
     ev.preventDefault();
     if (chat.busy) { chat.busy.abort(); return; }
     const question = chatQ.value.trim();
     if (!question || !chatCtx) return;
-    const v = updateChatLoc() || visibleRange();
+    hideCands();
+    chatSend.disabled = true;
+    let t;
+    try { t = await resolveTarget(question); } catch (e) {
+      if (e instanceof Unauthorized) { showLogin(); return; }
+      const v = visibleRange(); t = { path: chatCtx.path, start: v.start, end: v.end, label: '見えている範囲' };
+    } finally { chatSend.disabled = false; }
+    if (t.candidates) { showCands(question, t.candidates, t.name); return; }
+    send(question, t);
+  };
+
+  async function send(question, t) {
+    hideCands();
     chatQ.value = ''; chatQ.blur();
     if (chatLog.querySelector('p.msg')) chatLog.innerHTML = '';
+    const where = t.search ? '🔎 ' + t.label : '📍 ' + t.path + ' L' + t.start + '–' + t.end + (t.label ? '（' + t.label + '）' : '');
+    updateChatLoc();
+    if (t.reveal && fileApi && t.path === chatCtx.path) fileApi.reveal(t.start, t.end).catch(() => {});
     const u = document.createElement('div'); u.className = 'msg-u';
-    u.innerHTML = '<span class="at"></span>'; u.firstChild.textContent = '📍 ' + chatCtx.path + ' L' + v.start + '–' + v.end;
+    u.innerHTML = '<span class="at"></span>'; u.firstChild.textContent = where;
     u.append(question);
     const a = document.createElement('div'); a.className = 'msg-a'; a.textContent = '考え中…';
     chatLog.append(u, a); chatLog.scrollTop = chatLog.scrollHeight;
@@ -393,7 +509,7 @@
     try {
       const res = await fetch('/api/chat', { method: 'POST', credentials: 'same-origin', signal: ctl.signal,
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ repo: chatCtx.repo, path: chatCtx.path, start: v.start, end: v.end, question, session: chat.session }) });
+        body: JSON.stringify({ repo: chatCtx.repo, path: t.path, start: t.start || 0, end: t.end || 0, mode: t.search ? 'search' : '', question, session: chat.session }) });
       if (res.status === 401) { showLogin(); return; }
       if (!res.ok) { let m = res.statusText; try { m = (await res.json()).error || m; } catch (e) { /* ignore */ } throw new Error(m); }
       const reader = res.body.getReader(); const dec = new TextDecoder(); let buf = '';

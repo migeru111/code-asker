@@ -12,6 +12,7 @@ type Location struct {
 	StartLine  int // first visible line (1-based)
 	EndLine    int // last visible line
 	TotalLines int
+	Search     bool // the user described the place in words; the AI must find it itself
 }
 
 // Request is one question. Snippet is pre-built, line-numbered code around the location.

@@ -18,7 +18,12 @@ func BuildPrompt(r Request) string {
 	var b strings.Builder
 	l := r.Location
 	fmt.Fprintf(&b, "リポジトリ: %s\nファイル: %s\n", l.Repo, l.Path)
-	if l.StartLine > 0 {
+	if l.Search {
+		b.WriteString("場所: 指定なし。質問文の説明に合う箇所を Grep / Read で探し、見つけた場所を path:行番号 で示してください。\n")
+		if l.Path != "" {
+			fmt.Fprintf(&b, "（参考: ユーザーが今開いているファイルは上記のファイルです。そこに無ければリポジトリ全体を探してください）\n")
+		}
+	} else if l.StartLine > 0 {
 		fmt.Fprintf(&b, "画面に見えている行範囲: %d-%d（全 %d 行）\n", l.StartLine, l.EndLine, l.TotalLines)
 	}
 	if r.Snippet != "" {

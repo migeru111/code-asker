@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -53,6 +55,7 @@ func (s *Server) Handler() http.Handler {
 	api.HandleFunc("GET /api/file", s.file)
 	api.HandleFunc("GET /api/symbols", s.symbolList)
 	api.HandleFunc("GET /api/search", s.search)
+	api.HandleFunc("GET /api/symsearch", s.symSearch)
 	api.HandleFunc("POST /api/chat", s.chat)
 	mux.Handle("/api/", s.auth.Middleware(api))
 
@@ -209,6 +212,7 @@ type chatRequest struct {
 	End      int    `json:"end"`
 	Question string `json:"question"`
 	Session  string `json:"session"`
+	Mode     string `json:"mode"` // "search": the question describes the place in words
 }
 
 // chat answers a question about the code the user is looking at, streaming Server-Sent Events.
@@ -237,7 +241,16 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request) {
 
 	loc := ai.Location{Repo: req.Repo, Path: strings.Trim(req.Path, "/")}
 	var snippet string
-	if loc.Path != "" {
+	if req.Mode == "search" {
+		// No snippet: the AI finds the place itself. The path is only a hint and must still be valid.
+		loc.Search = true
+		if loc.Path != "" {
+			if _, err := s.store.Path(req.Repo, loc.Path); err != nil {
+				fail(w, err)
+				return
+			}
+		}
+	} else if loc.Path != "" {
 		if req.Start < 1 {
 			req.Start = 1
 		}
@@ -322,4 +335,107 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request) {
 			fl.Flush()
 		}
 	}
+}
+
+type symHit struct {
+	Path   string `json:"path"`
+	Name   string `json:"name"`
+	Kind   string `json:"kind"`
+	Line   int    `json:"line"`
+	End    int    `json:"end,omitempty"`
+	Scope  string `json:"scope,omitempty"`
+	rank   int
+	inHint bool
+}
+
+var wordRe = regexp.MustCompile(`[A-Z]?[a-z0-9]+|[A-Z]+[0-9]*`)
+
+// normName lowercases and drops everything but letters and digits, so that
+// "parse header", "parse_header" and "parseHeader" compare equal.
+func normName(s string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(s) {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+// symSearch finds definitions whose name fuzzily matches q anywhere in the repository.
+// ripgrep narrows down candidate files; the symbol extractor decides what is a definition.
+func (s *Server) symSearch(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	repoDir, err := s.store.Path(q.Get("repo"), "")
+	if err != nil {
+		fail(w, err)
+		return
+	}
+	name := strings.TrimSpace(q.Get("q"))
+	want := normName(name)
+	if len(name) > 100 || len(want) < 2 {
+		writeErr(w, 400, "bad query")
+		return
+	}
+	words := wordRe.FindAllString(name, -1)
+	for i := range words {
+		words[i] = regexp.QuoteMeta(strings.ToLower(words[i]))
+	}
+	res, err := search.Run(r.Context(), repoDir, "", strings.Join(words, "[_-]?"), search.Options{Regex: true})
+	if err != nil {
+		if errors.Is(err, search.ErrBadQuery) {
+			writeErr(w, 400, "bad query")
+			return
+		}
+		fail(w, err)
+		return
+	}
+	hint := q.Get("path")
+	var paths []string
+	seen := map[string]bool{}
+	for _, m := range res.Matches {
+		if !seen[m.Path] && len(paths) < 40 {
+			seen[m.Path] = true
+			paths = append(paths, m.Path)
+		}
+	}
+	var hits []symHit
+	for _, p := range paths {
+		abs, err := s.store.Path(q.Get("repo"), p)
+		if err != nil {
+			continue
+		}
+		syms, err := s.symbols.Extract(r.Context(), abs)
+		if err != nil {
+			continue
+		}
+		for _, sym := range syms {
+			n := normName(sym.Name)
+			rank := 0
+			switch {
+			case n == want:
+				rank = 3
+			case strings.HasPrefix(n, want):
+				rank = 2
+			case strings.Contains(n, want):
+				rank = 1
+			}
+			if rank > 0 {
+				hits = append(hits, symHit{Path: p, Name: sym.Name, Kind: sym.Kind, Line: sym.Line, End: sym.End, Scope: sym.Scope, rank: rank, inHint: p == hint})
+			}
+		}
+	}
+	sort.SliceStable(hits, func(i, j int) bool {
+		if hits[i].rank != hits[j].rank {
+			return hits[i].rank > hits[j].rank
+		}
+		return hits[i].inHint && !hits[j].inHint
+	})
+	if len(hits) > 15 {
+		hits = hits[:15]
+	}
+	if hits == nil {
+		hits = []symHit{}
+	}
+	writeJSON(w, 200, hits)
 }

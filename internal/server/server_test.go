@@ -201,3 +201,57 @@ func TestChatBusy(t *testing.T) {
 		t.Errorf("first: %d", c)
 	}
 }
+
+func TestSymSearch(t *testing.T) {
+	if _, err := exec.LookPath("rg"); err != nil {
+		t.Skip("rg not installed")
+	}
+	h := newTestServer(t)
+	var hits []struct {
+		Path, Name string
+		Line, End  int
+	}
+	// "parse header" (spoken) must find ParseHeader and ParseHeader2; the exact name ranks first
+	rec := get(h, "/api/symsearch?repo=proj&q=parse+header", true)
+	if rec.Code != 200 || json.Unmarshal(rec.Body.Bytes(), &hits) != nil || len(hits) != 2 {
+		t.Fatalf("%d %s", rec.Code, rec.Body)
+	}
+	if hits[0].Name != "ParseHeader" || hits[0].Path != "a.go" || hits[0].Line != 3 || hits[0].End < hits[0].Line || hits[1].Name != "ParseHeader2" {
+		t.Errorf("ranking: %+v", hits)
+	}
+	if rec = get(h, "/api/symsearch?repo=proj&q=parse_header", true); rec.Code != 200 || json.Unmarshal(rec.Body.Bytes(), &hits) != nil || len(hits) != 2 {
+		t.Errorf("snake_case: %d %s", rec.Code, rec.Body)
+	}
+	if rec = get(h, "/api/symsearch?repo=proj&q=zzznothing", true); rec.Code != 200 || strings.TrimSpace(rec.Body.String()) != "[]" {
+		t.Errorf("no match: %d %s", rec.Code, rec.Body)
+	}
+	for _, p := range []string{"/api/symsearch?repo=proj&q=", "/api/symsearch?repo=proj&q=a", "/api/symsearch?repo=..&q=abc"} {
+		if c := get(h, p, true).Code; c != 400 {
+			t.Errorf("%s: %d", p, c)
+		}
+	}
+	if c := get(h, "/api/symsearch?repo=proj&q=abc", false).Code; c != 401 {
+		t.Errorf("auth: %d", c)
+	}
+}
+
+func TestChatSearchMode(t *testing.T) {
+	f := &fakeAI{}
+	h := newTestServerAI(t, f)
+	rec := post(h, `{"repo":"proj","path":"a.go","mode":"search","question":"ログを書き出しているところは？"}`, true)
+	if rec.Code != 200 {
+		t.Fatalf("%d %s", rec.Code, rec.Body)
+	}
+	f.mu.Lock()
+	got := f.got
+	f.mu.Unlock()
+	if !got.Location.Search || got.Snippet != "" || got.Location.Path != "a.go" {
+		t.Errorf("search mode request: %+v", got)
+	}
+	if !strings.Contains(ai.BuildPrompt(got), "Grep / Read で探し") {
+		t.Errorf("prompt must tell the AI to search:\n%s", ai.BuildPrompt(got))
+	}
+	if c := post(h, `{"repo":"proj","path":"escape/x.go","mode":"search","question":"q"}`, true).Code; c != 403 {
+		t.Errorf("hint path escape: %d", c)
+	}
+}

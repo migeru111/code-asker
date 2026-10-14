@@ -81,6 +81,7 @@ func (e *Extractor) Extract(ctx context.Context, abs string) ([]Symbol, error) {
 	if syms == nil {
 		syms = []Symbol{}
 	}
+	fillEnds(syms)
 	e.mu.Lock()
 	if len(e.cache) > 256 {
 		e.cache = map[string][]Symbol{}
@@ -198,4 +199,35 @@ func fallback(abs string) ([]Symbol, error) {
 		}
 	}
 	return out, nil
+}
+
+// approxBodyLines is the guessed length of the last symbol in a file when no end is known.
+const approxBodyLines = 80
+
+func depth(s Symbol) int {
+	if s.Scope == "" {
+		return 0
+	}
+	return 1 + strings.Count(s.Scope, ".") + strings.Count(s.Scope, "::") + strings.Count(s.Scope, "/")
+}
+
+// fillEnds sets End for symbols the extractor gave no end for (older ctags parsers, regex fallback):
+// a symbol ends just before the next symbol that is not nested deeper than itself.
+func fillEnds(syms []Symbol) {
+	for i := range syms {
+		if syms[i].End >= syms[i].Line && syms[i].End != 0 {
+			continue
+		}
+		syms[i].End = syms[i].Line + approxBodyLines
+		d := depth(syms[i])
+		for j := i + 1; j < len(syms); j++ {
+			if syms[j].Line > syms[i].Line && depth(syms[j]) <= d {
+				syms[i].End = syms[j].Line - 1
+				break
+			}
+		}
+		if syms[i].End < syms[i].Line {
+			syms[i].End = syms[i].Line
+		}
+	}
 }
