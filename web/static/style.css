@@ -1,0 +1,53 @@
+:root {
+  --bg: #fff; --fg: #1f2328; --muted: #656d76; --line: #d0d7de; --bar: #f6f8fa;
+  --accent: #0969da; --hl: #fff8c5; --gutter: #f6f8fa; --fs: 13px;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #0d1117; --fg: #e6edf3; --muted: #8b949e; --line: #30363d; --bar: #161b22;
+          --accent: #58a6ff; --hl: #3b2e00; --gutter: #0d1117; }
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body { margin: 0; background: var(--bg); color: var(--fg);
+  font: 16px/1.4 -apple-system, BlinkMacSystemFont, "Hiragino Sans", sans-serif; }
+#bar { position: sticky; top: 0; z-index: 10; display: flex; align-items: center; gap: 8px;
+  padding: calc(6px + env(safe-area-inset-top)) calc(10px + env(safe-area-inset-right)) 6px calc(10px + env(safe-area-inset-left));
+  background: var(--bar); border-bottom: 1px solid var(--line); }
+#bar button { min-width: 44px; height: 40px; border: 1px solid var(--line); border-radius: 8px;
+  background: var(--bg); color: var(--fg); font-size: 16px; }
+#bar #back { font-size: 24px; line-height: 1; }
+#title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; direction: rtl; text-align: left; }
+#title bdi { direction: ltr; }
+#tools { display: flex; gap: 6px; }
+#tools button.on { background: var(--accent); color: #fff; border-color: var(--accent); }
+[hidden] { display: none !important; }
+
+.list { list-style: none; margin: 0; padding: 0 env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
+.list a { display: flex; align-items: center; gap: 10px; padding: 12px 14px; min-height: 48px;
+  color: var(--fg); text-decoration: none; border-bottom: 1px solid var(--line); }
+.list .ico { width: 1.4em; text-align: center; flex: none; }
+.list .name { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.list .size { color: var(--muted); font-size: 13px; flex: none; }
+.msg { padding: 24px 16px; color: var(--muted); }
+.err { color: #cf222e; }
+
+#login { max-width: 420px; margin: 12vh auto 0; padding: 0 20px; }
+#login input { width: 100%; font-size: 16px; padding: 12px; border: 1px solid var(--line);
+  border-radius: 8px; background: var(--bg); color: var(--fg); margin: 12px 0; }
+#login button { width: 100%; padding: 12px; font-size: 16px; border: 0; border-radius: 8px;
+  background: var(--accent); color: #fff; }
+
+/* Code view: no focusable elements, so tapping never raises the keyboard. */
+#code { overflow-x: auto; padding-bottom: env(safe-area-inset-bottom);
+  font: var(--fs)/1.5 ui-monospace, "SF Mono", Menlo, Consolas, monospace; -webkit-touch-callout: none; }
+.row { display: flex; min-width: max-content; }
+.row.hl { background: var(--hl); }
+.ln { position: sticky; left: 0; flex: none; text-align: right; padding: 0 8px 0 calc(6px + env(safe-area-inset-left));
+  color: var(--muted); background: var(--gutter); border-right: 1px solid var(--line);
+  user-select: none; -webkit-user-select: none; }
+.row.hl .ln { background: var(--hl); }
+.c { white-space: pre; padding: 0 12px 0 8px; tab-size: 4; }
+.wrapon .row { min-width: 0; }
+.wrapon .c { white-space: pre-wrap; overflow-wrap: anywhere; }
+.hljs { background: transparent !important; padding: 0 !important; display: inline; }
+.more { display: block; width: 100%; padding: 14px; border: 0; background: var(--bar); color: var(--accent); font-size: 15px; }
