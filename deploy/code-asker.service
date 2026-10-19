@@ -1,5 +1,5 @@
-# Install:  sudo cp deploy/code-asker.service /etc/systemd/system/code-asker.service
-# Then edit User / WorkingDirectory / HOME / PATH for your Raspberry Pi.
+# Template: do not copy this file by hand. `deploy/install.sh` fills in @USER@ / @HOME@ / @APP_DIR@ / @PATH@
+# for the current user and installs it as /etc/systemd/system/code-asker.service.
 [Unit]
 Description=code-asker (read-only code viewer + AI chat)
 After=network-online.target tailscaled.service
@@ -7,15 +7,15 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=pi
-WorkingDirectory=/home/pi/code-asker
+User=@USER@
+WorkingDirectory=@APP_DIR@
 # CODE_ASKER_ROOT, CODE_ASKER_TOKEN, CODE_ASKER_LISTEN (see README). Keep it chmod 600.
 EnvironmentFile=/etc/code-asker.env
 # `claude` (Node, installed under the service user) must be found and must see the
 # same HOME as your interactive login, otherwise its subscription login is not used.
-Environment=HOME=/home/pi
-Environment=PATH=/home/pi/.local/bin:/home/pi/.npm-global/bin:/usr/local/bin:/usr/bin:/bin
-ExecStart=/home/pi/code-asker/bin/code-asker
+Environment=HOME=@HOME@
+Environment=PATH=@PATH@
+ExecStart=@APP_DIR@/bin/code-asker
 Restart=always
 RestartSec=3
 NoNewPrivileges=true

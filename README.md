@@ -38,24 +38,31 @@ sudo apt install ripgrep universal-ctags
 ```sh
 git clone https://github.com/migeru111/code-asker ~/code-asker && cd ~/code-asker
 
-# 設定ファイル（トークンは長いランダム文字列に）
-sudo tee /etc/code-asker.env >/dev/null <<EOT
-CODE_ASKER_ROOT=/home/pi/src
-CODE_ASKER_TOKEN=$(head -c 24 /dev/urandom | base64 | tr -d '/+=')
-CODE_ASKER_LISTEN=100.x.y.z:8080
-EOT
-sudo chmod 600 /etc/code-asker.env
-
-# systemd（User / WorkingDirectory / HOME / PATH を環境に合わせて編集）
-sudo cp deploy/code-asker.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable code-asker
+# 設定ファイルと systemd ユニットを、今のユーザー・ホーム・場所に合わせて作る（sudo は付けない）
+deploy/install.sh --listen 100.x.y.z:8080 --root ~/src
 
 # 初回ビルドと起動
 deploy/deploy.sh
 ```
-`deploy.sh` は `sudo systemctl restart` を使うため、パスワードなしで実行できるよう sudoers に
-`pi ALL=(root) NOPASSWD: /usr/bin/systemctl restart code-asker, /usr/bin/journalctl -u code-asker *` を追加しておくと便利です。
+- `--listen` は、ラズパイの **Tailscale / LAN の IP** とポート（例 `100.64.0.9:8080`）。省略すると `127.0.0.1:8080`（ラズパイ自身からしか開けない）。
+- `--root` は、`git clone` 済みのリポジトリを置いているフォルダ（既定 `~/src`）。
+- `install.sh` は **ユーザー名を決め打ちしません**（`id -un` と `$HOME`、この checkout の場所を使います）。
+  - `/etc/code-asker.env`（`chmod 600`、ランダムなトークン入り）を作ります。既にあれば**上書きしません**。
+  - `/etc/systemd/system/code-asker.service` を作って `enable` します。`claude` / `node` の場所を `PATH` に入れます。
+  - 作られるユニットの内容は `deploy/install.sh --dry-run` で確認できます。
+- 表示された**ログイン用トークン**を控えてください（あとで `sudo grep TOKEN /etc/code-asker.env` でも確認できます）。
+- `deploy.sh` は `sudo systemctl restart` を使うため、パスワードなしで実行できるよう sudoers に次の 1 行を足しておくと便利です（`sudo visudo -f /etc/sudoers.d/code-asker`）。`<ユーザー名>` は `whoami` の結果に置き換えてください。
+  `<ユーザー名> ALL=(root) NOPASSWD: /usr/bin/systemctl restart code-asker, /usr/bin/journalctl -u code-asker *`
+
+### 起動しないとき
+`sudo journalctl -u code-asker -n 30 --no-pager` を見ます。
+
+| ログ | 原因と対処 |
+|---|---|
+| `status=217/USER` / `Failed to determine user credentials` | ユニットの `User=` が存在しない。`deploy/install.sh` をもう一度実行（ユニットを作り直す） |
+| `status=203/EXEC` / `No such file` | `bin/code-asker` が無い。`deploy/deploy.sh` のビルドが成功しているか確認 |
+| `CODE_ASKER_ROOT and CODE_ASKER_TOKEN must be set` / `root:` エラー | `/etc/code-asker.env` の内容、`CODE_ASKER_ROOT` のフォルダが実在するか |
+| `listen tcp ...: cannot assign requested address` | `CODE_ASKER_LISTEN` の IP がこのラズパイのものではない（Tailscale が起動していない場合も） |
 
 ## AI チャットの準備（ラズパイ側）
 AI は **ラズパイ上で** `claude -p` を呼びます。開発環境のログインとは別なので、ラズパイで一度だけ準備します。
@@ -65,7 +72,7 @@ npm install -g @anthropic-ai/claude-code      # npm の prefix をユーザー�
 claude                                         # 対話で /login。ログイン後 /exit
 # 2. そのユーザーで非対話モードが動くことを確認
 cd ~/src/<どれかのリポジトリ> && claude -p "このリポジトリの概要を1文で" --tools "Read,Grep,Glob" --permission-mode dontAsk
-# 3. claude の場所が systemd の PATH に含まれているか確認（which claude）。違えば code-asker.service の PATH を直す
+# 3. claude の場所は deploy/install.sh が systemd の PATH に入れる。claude を入れる/移す前に install.sh を実行していたら、もう一度 deploy/install.sh を実行する（既存の設定ファイルは上書きされない）
 ```
 - **API キーは使いません。** サービスは子プロセスの環境から `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` を取り除いて起動するので、サブスクの枠で動きます（質問ごとに利用枠を消費します）。
 - systemd から動かすため、ユニットの `HOME` は **ログインしたユーザーのホーム**にしてください（認証情報は `~/.claude` にあります）。
