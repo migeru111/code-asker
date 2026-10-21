@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # First-time setup, meant to run ON the Raspberry Pi as the normal user that will run the service
 # (NOT with sudo; it calls sudo itself for the two files under /etc):
-#   deploy/install.sh --listen 100.x.y.z:8080 [--root ~/src]
+#   deploy/install.sh --listen 100.x.y.z:8421 [--root ~/src]
 # - creates /etc/code-asker.env (random token) unless it already exists
 # - installs the systemd unit for THIS user/home/checkout and enables it
 # Use --dry-run to print the unit file without touching anything.
@@ -10,7 +10,7 @@ set -euo pipefail
 APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ENV_FILE="${ENV_FILE:-/etc/code-asker.env}"
 UNIT_DEST="${UNIT_DEST:-/etc/systemd/system/code-asker.service}"
-LISTEN="127.0.0.1:8080"
+LISTEN="127.0.0.1:8421"
 ROOT="$HOME/src"
 DRY=0
 

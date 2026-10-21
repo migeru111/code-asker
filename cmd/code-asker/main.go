@@ -26,7 +26,7 @@ func main() {
 	token := os.Getenv("CODE_ASKER_TOKEN")
 	listen := os.Getenv("CODE_ASKER_LISTEN")
 	if listen == "" {
-		listen = "127.0.0.1:8080"
+		listen = "127.0.0.1:8421"
 	}
 	if rootDir == "" || token == "" {
 		log.Fatal("CODE_ASKER_ROOT and CODE_ASKER_TOKEN must be set")
