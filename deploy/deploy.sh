@@ -14,12 +14,12 @@ OLD="$BIN.old"
 SUDO=""
 if [ "$(id -u)" -ne 0 ]; then SUDO="sudo"; fi
 
-# Derive the health-check URL from CODE_ASKER_LISTEN (default 127.0.0.1:8080).
+# Derive the health-check URL from CODE_ASKER_LISTEN (default 127.0.0.1:8421).
 LISTEN="${CODE_ASKER_LISTEN:-}"
 if [ -z "$LISTEN" ] && [ -r "$ENV_FILE" ]; then
   LISTEN="$(sed -n 's/^CODE_ASKER_LISTEN=//p' "$ENV_FILE" | tail -n1 | tr -d '"'"'"' ')"
 fi
-LISTEN="${LISTEN:-127.0.0.1:8080}"
+LISTEN="${LISTEN:-127.0.0.1:8421}"
 HOST="${LISTEN%:*}"; PORT="${LISTEN##*:}"
 case "$HOST" in ""|"0.0.0.0"|"[::]"|"::") HOST="127.0.0.1" ;; esac
 HEALTH_URL="${HEALTH_URL:-http://$HOST:$PORT/healthz}"

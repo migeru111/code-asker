@@ -7,7 +7,7 @@ Raspberry Pi 5 上で動かし、将来は表示中の位置情報つきで AI�
 
 ## セキュリティ前提（必読）
 - **LAN / Tailscale 内だけで使う前提**です。インターネットには公開しないでください（TLS なし・固定トークン認証のみ）。
-- `CODE_ASKER_LISTEN` は LAN または Tailscale の IP（例 `100.x.y.z:8080`）を指定します。`0.0.0.0` はファイアウォールで守られている場合のみ。
+- `CODE_ASKER_LISTEN` は LAN または Tailscale の IP（例 `100.x.y.z:8421`）を指定します。`0.0.0.0` はファイアウォールで守られている場合のみ。
 - 認証: `CODE_ASKER_TOKEN`（8文字以上）でログイン → HttpOnly Cookie。トークンなしでは `/api/*` は常に 401（`/healthz` と静的シェルを除く）。ログイン失敗は IP ごとに 5 回/分で制限。
 - パスは閲覧ルート配下に正規化し、`..`・シンボリックリンク・`.git` への脱出を拒否します。ルート外を指すシンボリックリンクのリポジトリは表示されません。
 - 外部コマンド（`rg` / `ctags`）は引数配列で起動し、シェルを経由しません。検索語は `-e` で渡すので `-` 始まりでもオプション扱いになりません。検索はシンボリックリンクを辿らず、結果は 200 件・10 秒で打ち切ります。
@@ -17,16 +17,24 @@ Raspberry Pi 5 上で動かし、将来は表示中の位置情報つきで AI�
 |---|---|---|
 | `CODE_ASKER_ROOT` | ✔ | 閲覧ルート（例 `~/src`）。直下の git リポジトリが一覧に出る |
 | `CODE_ASKER_TOKEN` | ✔ | ログイン用の固定トークン |
-| `CODE_ASKER_LISTEN` | | 待受アドレス。既定 `127.0.0.1:8080` |
+| `CODE_ASKER_LISTEN` | | 待受アドレス。既定 `127.0.0.1:8421` |
 | `CODE_ASKER_AI` | | `off` で AI チャットを無効化 |
 | `CODE_ASKER_CLAUDE_BIN` | | `claude` の場所。既定は PATH から探す |
 | `CODE_ASKER_CLAUDE_MODEL` | | `claude --model` に渡す値（例 `sonnet`）。未指定ならデフォルトモデル |
 | `CODE_ASKER_AI_TIMEOUT` | | 1 回の質問の制限時間。既定 `3m` |
 
+### ポートが他のアプリと被るとき
+既定は `8421` です（code-server などが使う 8080 を避けています）。`address already in use` が出たら、別のポートに変えます。使用中のポートは `ss -ltnp | grep :<ポート>` で確認できます。
+```sh
+sudo sed -i 's/^CODE_ASKER_LISTEN=.*/CODE_ASKER_LISTEN=<IP>:<新しいポート>/' /etc/code-asker.env
+sudo systemctl restart code-asker
+```
+`deploy.sh` のヘルスチェックも、この設定ファイルのポートを読みます。iPad 側の URL も新しいポートに変えてください。
+
 ## ローカルで試す
 ```sh
 CODE_ASKER_ROOT=~/src CODE_ASKER_TOKEN=devtoken123 go run ./cmd/code-asker
-# → http://127.0.0.1:8080
+# → http://127.0.0.1:8421
 go test ./...
 ```
 
@@ -39,12 +47,12 @@ sudo apt install ripgrep universal-ctags
 git clone https://github.com/migeru111/code-asker ~/code-asker && cd ~/code-asker
 
 # 設定ファイルと systemd ユニットを、今のユーザー・ホーム・場所に合わせて作る（sudo は付けない）
-deploy/install.sh --listen 100.x.y.z:8080 --root ~/src
+deploy/install.sh --listen 100.x.y.z:8421 --root ~/src
 
 # 初回ビルドと起動
 deploy/deploy.sh
 ```
-- `--listen` は、ラズパイの **Tailscale / LAN の IP** とポート（例 `100.64.0.9:8080`）。省略すると `127.0.0.1:8080`（ラズパイ自身からしか開けない）。
+- `--listen` は、ラズパイの **Tailscale / LAN の IP** とポート（例 `100.64.0.9:8421`）。省略すると `127.0.0.1:8421`（ラズパイ自身からしか開けない）。
 - `--root` は、`git clone` 済みのリポジトリを置いているフォルダ（既定 `~/src`）。
 - `install.sh` は **ユーザー名を決め打ちしません**（`id -un` と `$HOME`、この checkout の場所を使います）。
   - `/etc/code-asker.env`（`chmod 600`、ランダムなトークン入り）を作ります。既にあれば**上書きしません**。
@@ -120,7 +128,7 @@ scp code-asker pi@raspberrypi:~/code-asker/bin/code-asker.new
 - コード表示は `<div>/<span>` のみで、`textarea` / `contenteditable` / `input` を使わない（フォーカス対象がないのでキーボードが出ない）。
 
 ## 動作確認チェックリスト（iPad）
-1. Safari で `http://<ラズパイのIP>:8080` を開き、トークンでログインできる
+1. Safari で `http://<ラズパイのIP>:8421` を開き、トークンでログインできる
 2. 共有 → 「ホーム画面に追加」→ PWA として起動できる
 3. リポジトリ一覧 → ディレクトリ → ファイルと辿れ、戻るボタンが効く
 4. 行番号・ハイライトが出る。長いファイルで下までスクロールすると続きが読み込まれる
