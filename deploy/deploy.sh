@@ -15,9 +15,13 @@ SUDO=""
 if [ "$(id -u)" -ne 0 ]; then SUDO="sudo"; fi
 
 # Derive the health-check URL from CODE_ASKER_LISTEN (default 127.0.0.1:8421).
+# The env file is root-only (chmod 600), so fall back to sudo when we cannot read it ourselves;
+# guessing 127.0.0.1 would fail whenever the service listens on a specific LAN/Tailscale IP.
 LISTEN="${CODE_ASKER_LISTEN:-}"
-if [ -z "$LISTEN" ] && [ -r "$ENV_FILE" ]; then
-  LISTEN="$(sed -n 's/^CODE_ASKER_LISTEN=//p' "$ENV_FILE" | tail -n1 | tr -d '"'"'"' ')"
+if [ -z "$LISTEN" ] && [ -e "$ENV_FILE" ]; then
+  if [ -r "$ENV_FILE" ]; then ENV_TEXT="$(cat "$ENV_FILE")"; else ENV_TEXT="$($SUDO cat "$ENV_FILE" 2>/dev/null || true)"; fi
+  LISTEN="$(printf '%s\n' "$ENV_TEXT" | sed -n 's/^CODE_ASKER_LISTEN=//p' | tail -n1 | tr -d '"'"'"' ')"
+  if [ -z "$LISTEN" ]; then echo "note: could not read CODE_ASKER_LISTEN from $ENV_FILE; checking 127.0.0.1:8421 (set HEALTH_URL to override)" >&2; fi
 fi
 LISTEN="${LISTEN:-127.0.0.1:8421}"
 HOST="${LISTEN%:*}"; PORT="${LISTEN##*:}"

@@ -70,6 +70,8 @@ deploy/deploy.sh
 | `status=217/USER` / `Failed to determine user credentials` | ユニットの `User=` が存在しない。`deploy/install.sh` をもう一度実行（ユニットを作り直す） |
 | `status=203/EXEC` / `No such file` | `bin/code-asker` が無い。`deploy/deploy.sh` のビルドが成功しているか確認 |
 | `CODE_ASKER_ROOT and CODE_ASKER_TOKEN must be set` / `root:` エラー | `/etc/code-asker.env` の内容、`CODE_ASKER_ROOT` のフォルダが実在するか |
+| `address already in use` | そのポートを別のアプリ（code-server など）が使用中。「ポートが他のアプリと被るとき」を参照 |
+| `deploy.sh` が `health check failed` と出るがサービスは動いている | ヘルスチェックの宛先が違う。`sudo grep LISTEN /etc/code-asker.env` の IP:ポートに対して、`HEALTH_URL=http://<IP>:<ポート>/healthz deploy/deploy.sh` で上書きできる |
 | `listen tcp ...: cannot assign requested address` | `CODE_ASKER_LISTEN` の IP がこのラズパイのものではない（Tailscale が起動していない場合も） |
 
 ## AI チャットの準備（ラズパイ側）
