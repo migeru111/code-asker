@@ -108,3 +108,10 @@ body { margin: 0; background: var(--bg); color: var(--fg);
 .cand .nm small { color: var(--muted); }
 .cand .at { flex: none; color: var(--muted); font-size: 12px; max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cand.alt { color: var(--accent); }
+
+#chat-status { padding: 6px 12px; font-size: 13px; color: var(--muted); background: var(--bar); border-bottom: 1px solid var(--line); }
+#chat-status.err { color: #cf222e; }
+#chat-mic { width: 52px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--fg); font-size: 20px; }
+#chat-auto.on { background: var(--accent); color: #fff; border-color: var(--accent); }
+#micbtn.rec, #chat-mic.rec { background: #cf222e; color: #fff; border-color: #cf222e; animation: pulse 1.2s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: .6; } }
