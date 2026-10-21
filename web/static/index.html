@@ -22,6 +22,7 @@
   <div id="title">code-asker</div>
   <button id="search" type="button" aria-label="検索" hidden>🔍</button>
   <div id="tools" hidden>
+    <button id="micbtn" type="button" aria-label="音声で質問">🎤</button>
     <button id="chatbtn" type="button" aria-label="AIに質問">💬</button>
     <button id="symbols" type="button" aria-label="シンボル一覧">{ }</button>
     <button id="fs-dec" type="button" aria-label="文字を小さく">A−</button>
@@ -31,10 +32,11 @@
 </header>
 <main id="view"></main>
 <div id="chat" hidden>
-  <div id="chat-head"><div id="chat-loc"></div><button id="chat-new" type="button">新規</button><button id="chat-close" type="button" aria-label="閉じる">✕</button></div>
+  <div id="chat-head"><div id="chat-loc"></div><button id="chat-auto" type="button" title="話し終わったら自動で送信">自動送信</button><button id="chat-new" type="button">新規</button><button id="chat-close" type="button" aria-label="閉じる">✕</button></div>
+  <div id="chat-status" hidden></div>
   <div id="chat-log"></div>
   <div id="chat-cands" hidden></div>
-  <form id="chat-form"><textarea id="chat-q" rows="2" placeholder="見えている範囲について質問…" autocapitalize="off"></textarea><button id="chat-send" type="submit">送信</button></form>
+  <form id="chat-form"><textarea id="chat-q" rows="2" placeholder="見えている範囲について質問…" autocapitalize="off"></textarea><button id="chat-mic" type="button" aria-label="音声入力">🎤</button><button id="chat-send" type="submit">送信</button></form>
 </div>
 <div id="sheet" hidden>
   <div id="sheet-head"><span id="sheet-title"></span><button id="sheet-close" type="button" aria-label="閉じる">✕</button></div>

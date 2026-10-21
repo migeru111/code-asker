@@ -15,6 +15,9 @@
   const chatQ = document.getElementById('chat-q');
   const chatSend = document.getElementById('chat-send');
   const barEl = document.getElementById('bar');
+  const micBtns = [document.getElementById('micbtn'), document.getElementById('chat-mic')];
+  const chatStatus = document.getElementById('chat-status');
+  const autoBtn = document.getElementById('chat-auto');
   const CHUNK = 500;
 
   const LANGS = {
@@ -340,7 +343,7 @@
     chat.repo = repo; chat.session = ''; chat.busy = null;
     chatLog.innerHTML = '<p class="msg">コードを見ながら質問できます。見えている行範囲が自動で付きます。</p>';
   }
-  function closeChat() { chatPanel.hidden = true; document.body.classList.remove('chat-open'); }
+  function closeChat() { if (typeof rec !== 'undefined' && rec) rec.abort(); chatPanel.hidden = true; document.body.classList.remove('chat-open'); }
   function toggleChat() {
     if (!chatPanel.hidden) { closeChat(); return; }
     sheet.hidden = true;
@@ -350,6 +353,58 @@
     chatLog.scrollTop = chatLog.scrollHeight;
   }
   document.getElementById('chat-close').onclick = closeChat;
+
+  // ---- one-tap voice input (the browser's own speech recognition; no audio reaches this server)
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  let rec = null;
+  let autoSend = pref.get('autosend', '0') === '1';
+  autoBtn.classList.toggle('on', autoSend);
+  autoBtn.onclick = () => { autoSend = !autoSend; pref.set('autosend', autoSend ? '1' : '0'); autoBtn.classList.toggle('on', autoSend); };
+
+  function setStatus(text, isErr) {
+    chatStatus.hidden = !text; chatStatus.textContent = text || ''; chatStatus.classList.toggle('err', !!isErr);
+  }
+  function setRecording(on) { micBtns.forEach((b) => b.classList.toggle('rec', on)); }
+
+  // Fallback: open the keyboard so the user can press the keyboard's own microphone key.
+  function keyboardFallback(msg) {
+    setStatus(msg + ' キーボードの🎤を押して話してください。', true);
+    chatQ.focus();
+  }
+
+  function toggleMic() {
+    if (!chatCtx) return;
+    if (chatPanel.hidden) toggleChat();
+    if (rec) { rec.stop(); return; } // second tap = finish now
+    if (!SR) { keyboardFallback('この端末・ブラウザでは音声認識を直接使えません。'); return; }
+    const base = chatQ.value.trim() ? chatQ.value.trim() + ' ' : '';
+    let failed = false;
+    const r = new SR();
+    r.lang = 'ja-JP'; r.interimResults = true; r.continuous = false; r.maxAlternatives = 1;
+    r.onstart = () => { setRecording(true); setStatus('🎤 聞いています…（話し終わると自動で止まります）'); };
+    r.onresult = (ev) => {
+      let text = '';
+      for (let i = 0; i < ev.results.length; i++) text += ev.results[i][0].transcript;
+      chatQ.value = base + text;
+      updateChatLoc(); // shows how the dictated text will be interpreted
+    };
+    r.onerror = (ev) => {
+      failed = true;
+      if (ev.error === 'not-allowed' || ev.error === 'service-not-allowed') {
+        keyboardFallback('マイクまたは音声認識が許可されていません（http のアドレスでは Safari が拒否することがあります）。');
+      } else if (ev.error === 'no-speech') setStatus('音声が聞き取れませんでした。もう一度 🎤 を押してください', true);
+      else if (ev.error !== 'aborted') setStatus('音声入力エラー: ' + ev.error, true);
+    };
+    r.onend = () => {
+      rec = null; setRecording(false);
+      if (!failed) setStatus('');
+      updateChatLoc();
+      if (!failed && autoSend && chatQ.value.trim()) chatSend.click();
+    };
+    rec = r;
+    try { r.start(); } catch (e) { rec = null; keyboardFallback('音声入力を開始できませんでした。'); }
+  }
+  micBtns.forEach((b) => { b.onclick = toggleMic; });
   document.getElementById('chat-new').onclick = () => { if (chatCtx) resetChat(chatCtx.repo); };
 
   // Lines currently visible above the chat panel, found by hit-testing rows (no scroll tracking needed).
@@ -487,7 +542,7 @@
   };
 
   async function send(question, t) {
-    hideCands();
+    hideCands(); setStatus('');
     chatQ.value = ''; chatQ.blur();
     if (chatLog.querySelector('p.msg')) chatLog.innerHTML = '';
     const where = t.search ? '🔎 ' + t.label : '📍 ' + t.path + ' L' + t.start + '–' + t.end + (t.label ? '（' + t.label + '）' : '');
